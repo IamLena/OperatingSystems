@@ -14,7 +14,7 @@
 
 #define N 5
 #define pn 1
-#define cn 1
+#define cn 2
 
 struct sembuf lockproducer[2] = {{SE, -1, 1}, {SB, -1, 1}};
 struct sembuf unlockproducer[2] = {{SB, 1, 1}, {SF, 1, 1}};
@@ -91,7 +91,8 @@ int main(void) {
 	ctlb = semctl(fds, SB, SETVAL, 1);
 	if (ctle == -1 || ctlf == -1 || ctlb == -1) {ermsg("semctl");}
 
-	int fdm = shmget(1, N * sizeof(int), IPC_CREAT|perms);
+	size_t sizem = N * cn * sizeof(int);
+	int fdm = shmget(3, sizem, IPC_CREAT|perms);
 	if (fdm == -1) {ermsg("shmget");}
 
 	int parentflag = 1;
@@ -119,7 +120,7 @@ int main(void) {
 
 	for (int i = 0; i < pn; i++) {
 		if (producers[i] == 0) {
-			produce(fds, fdm, N, i);
+			produce(fds, fdm, 2 * N, i);
 		}
 	}
 
@@ -129,5 +130,7 @@ int main(void) {
 			child = wait(&status);
 			printf("Child has finished: PID = %d CODE = %d\n", child, WEXITSTATUS(status));
 		}
+		if (shmctl (fdm, IPC_RMID, (struct shmid_ds *) 0) == -1) {
+			ermsg("shmctl");}
 	}	
 }
