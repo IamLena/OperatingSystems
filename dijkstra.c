@@ -7,12 +7,13 @@
 #include <sys/shm.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <math.h>
 
 #define SE 0
 #define SF 1
 #define SB 2
 
-#define N 5
+#define pqty 10
 #define pn 1
 #define cn 2
 
@@ -26,20 +27,23 @@ void ermsg(const char *msg) {
 	exit(1);
 }
 
-void consume_num(int fds, int **addr, int id) {
+void consume_num(int fds, int *addr, int id) {
 	sleep(rand() % 4);
 	if (semop(fds, lockconsumer, 2) == -1) {ermsg("lock consumer");}
-	printf("c%d: %d\n", id, **(addr));
-	(*addr) ++;
+	int cindex = *(addr + 1) + 2;
+	printf("c%d: %d of index %d\n", id, *(addr + cindex), cindex);
+	*(addr + 1) = cindex - 1;
 	if (semop(fds, unlockconsumer, 2) == -1) {ermsg("unlock consumer");}
 }
 
-void produce_num(int fds, int **addr, int num, int id) {
+void produce_num(int fds, int *addr, int num, int id) {
 	sleep(rand() % 2);
 	if (semop(fds, lockproducer, 2) == -1) {ermsg("lock producer");}
-	printf("p%d: %d\n", id, num);
-	**addr = num;
-	(*addr)++;
+	int pindex = (*addr) + 2;
+	printf("p%d: %d of index %d\n", id, num, pindex);
+	*(addr + pindex) = num;
+	pindex -= 1;
+	*addr = pindex;
 	if (semop(fds, unlockproducer, 2) == -1) {ermsg("unlock producer");}
 }
 
@@ -47,12 +51,11 @@ void consume(int fds, int fdm, int n, int i) {
 	printf("consumer #%d\n", i);
 	int *addr = (int *)shmat(fdm, 0, 0);
 	if ((void*)addr == (void *) -1){ermsg("shmat");}
-	int *head = addr;
 	for (int j = 0; j < n; j++) {
-		consume_num(fds, &addr, i);
+		consume_num(fds, addr, i);
 	}
 	
-	if(shmdt(head)) {ermsg("shmdt");}
+	if(shmdt(addr)) {ermsg("shmdt");}
 	printf("consumer #%d is over\n", i);
 }
 
@@ -60,11 +63,10 @@ void produce(int fds, int fdm, int n, int i) {
 	printf("producer #%d\n", i);
 	int *addr = (int *)shmat(fdm, 0, 0);
 	if ((void*)addr == (void *) -1){ermsg("shmat");}
-	int *head = addr;
 	for (int j = 0; j < n; j++) {
-		produce_num(fds, &addr, j, i);
+		produce_num(fds, addr, j, i);
 	}
-	if(shmdt(head)) {ermsg("shmdt");}
+	if(shmdt(addr)) {ermsg("shmdt");}
 	printf("producer #%d is over\n", i);
 } 
 
@@ -86,14 +88,18 @@ int main(void) {
 	if (fds == -1) {ermsg("semget");}
 
 	int ctle, ctlf, ctlb;
-	ctle = semctl(fds, SE, SETVAL, N);
+	ctle = semctl(fds, SE, SETVAL, pqty * pn);
 	ctlf = semctl(fds, SF, SETVAL, 0);
 	ctlb = semctl(fds, SB, SETVAL, 1);
 	if (ctle == -1 || ctlf == -1 || ctlb == -1) {ermsg("semctl");}
 
-	size_t sizem = N * cn * sizeof(int);
+	size_t sizem = (pn * pqty + 2) * sizeof(int);
 	int fdm = shmget(3, sizem, IPC_CREAT|perms);
 	if (fdm == -1) {ermsg("shmget");}
+	int* addr = (int*)shmat(fdm, 0, 0);
+	if ((void*)addr == (void *) -1){ermsg("shmat");}
+	*addr = 0; //produce index
+	*(addr + 1) = 0; //consume index
 
 	int parentflag = 1;
 	for (int i = 0; i < cn; i++) {
@@ -112,15 +118,16 @@ int main(void) {
 		}
 	}
 	
+	int cqty = pqty * pn / cn;
 	for (int i = 0; i < cn; i++) {
 		if (consumers[i] == 0) {
-			consume(fds, fdm, N, i);
+			consume(fds, fdm, cqty, i);
 		}
 	}
-
+	
 	for (int i = 0; i < pn; i++) {
 		if (producers[i] == 0) {
-			produce(fds, fdm, 2 * N, i);
+			produce(fds, fdm, pqty, i);
 		}
 	}
 
